@@ -1,55 +1,84 @@
 import json
-import time
-from pathlib import Path
 import requests
-
-
-class StatusCodeError(Exception):
-    def __init__(self, txt):
-        self.txt = txt
+import time
 
 
 class Parser5ka:
-    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.16; rv:83.0) Gecko/20100101 Firefox/83.0"}
-    
+    _params = {
+        'records_per_page': 50,
+    }
+    _headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:81.0) Gecko/20100101 Firefox/81.0',
+    }
+
     def __init__(self, start_url):
         self.start_url = start_url
-    
-    def run(self):
-        try:
-            for product in self.parse(self.start_url):
-                file_path = Path(__file__).parent.joinpath('products', f'{product["id"]}.json')
-                self.save(product, file_path)
-        except requests.exceptions.MissingSchema:
-            exit()
-    
-    def get_response(self, url, **kwargs):
+
+    @staticmethod
+    def _get(*args, **kwargs):
         while True:
             try:
-                response = requests.get(url, **kwargs)
+                response = requests.get(*args, **kwargs)
                 if response.status_code != 200:
-                    raise StatusCodeError
-                time.sleep(0.05)
+                    raise Exception  # todo сделать класс ошибки для работы со статусами
+                time.sleep(0.1)
                 return response
-            except (requests.exceptions.HTTPError,
-                    StatusCodeError,
-                    requests.exceptions.BaseHTTPError,
-                    requests.exceptions.ConnectTimeout):
-                time.sleep(0.25)
-    
+            # todo Обработать конкретные ошибки
+            except Exception:
+                time.sleep(0.250)
+
+    def run(self):
+        for products in self.parse(self.start_url):
+            for product in products:
+                self.save_to_json_file(product, product['id'])
+
     def parse(self, url):
+        if not url:
+            url = self.start_url
+        params = self._params
         while url:
-            response = self.get_response(url, headers=self.headers)
-            data = response.json()
-            url = data['next']
-            for product in data['results']:
-                yield product
-    
-    def save(self, data: dict, file_path):
-        with open(file_path, 'w', encoding='UTF-8') as file:
+            response = self._get(url, params=params, headers=self._headers)
+            if params:
+                params = {}
+            data: dict = response.json()
+            url = data.get('next')
+
+            yield data.get('results')
+
+    @staticmethod
+    def save_to_json_file(data: dict, file_name):
+        with open(f'products/{file_name}.json', 'w', encoding='UTF-8') as file:
             json.dump(data, file, ensure_ascii=False)
 
 
+class ParserCatalog(Parser5ka):
+
+    def __init__(self, start_url, category_url):
+        self.category_url = category_url
+        super().__init__(start_url)
+
+    def get_categories(self, url):
+        response = requests.get(url, headers=self._headers)
+        return response.json()
+
+    def run(self):
+        for category in self.get_categories(self.category_url):
+            data = {
+                "name": category['parent_group_name'],
+                'code': category['parent_group_code'],
+                "products": [],
+            }
+
+            self._params['categories'] = category['parent_group_code']
+
+            for products in self.parse(self.start_url):
+                data["products"].extend(products)
+            self.save_to_json_file(
+                data,
+                category['parent_group_code']
+            )
+
+
 if __name__ == '__main__':
-    parser = Parser5ka("djkhjdhjkdhdj")
+    parser = ParserCatalog('https://5ka.ru/api/v2/special_offers/', 'https://5ka.ru/api/v2/categories/')
     parser.run()
