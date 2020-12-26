@@ -33,14 +33,11 @@ class GbBlogParse:
                     self.tasks.append(self.posts_line_parse(task_url))
                     self.done_urls.add(task_url)
 
-            posts_wrap = soup.find("div",
-                                   attrs={"class": "post-items-wrapper"}
-                                   )
+            posts_wrap = soup.find("div", attrs={"class": "post-items-wrapper"})
 
             for post_url in {
                 urljoin(self.start_url, url.get("href"))
-                for url in posts_wrap.find_all("a",
-                                               attrs={"class": "post-item__title"})
+                for url in posts_wrap.find_all("a", attrs={"class": "post-item__title"})
             }:
                 if post_url not in self.done_urls:
                     self.tasks.append(self.post_parse(post_url))
@@ -51,20 +48,55 @@ class GbBlogParse:
     def post_parse(self, url):
         def task():
             soup = self._get_soup(url)
-            author_name_tag = soup.find("div", attrs={"itemprop": "author"})
             data = {
-                "post_data": {
-                    "url": url,
-                    "title": soup.find("h1").text,
-                },
-                "author": {
-                    "name": author_name_tag.text,
-                    "url": urljoin(self.start_url, author_name_tag.parent.get("href")),
-                },
+                "post_data": self.__get_post_data(url, soup),
+                "author": self.__get_post_author(soup),
+                "tags": self.__get_post_tags(soup),
+                "comments": self.__get_post_comments(soup),
             }
             self.save(data)
 
         return task
+
+    def __get_post_data(self, url, soup):
+        result = {
+            "url": url,
+            "title": soup.find("h1").text,
+        }
+        return result
+
+    def __get_post_comments(self, soup):
+
+        post_id = soup.find(
+            "div", attrs={"class": "referrals-social-buttons-small-wrapper"}
+        ).get("data-minifiable-id")
+        params = {
+            "commentable_type": "Post",
+            "commentable_id": int(post_id),
+            "order": "desc",
+        }
+        j_data = requests.get(
+            urljoin(self.start_url, "/api/v2/comments"), params=params
+        )
+        return j_data.json()
+
+    def __get_post_author(self, soup):
+        author_name_tag = soup.find("div", attrs={"itemprop": "author"})
+        result = {
+            "name": author_name_tag.text,
+            "url": urljoin(self.start_url, author_name_tag.parent.get("href")),
+        }
+        return result
+
+    def __get_post_tags(self, soup):
+        result = []
+        for tag in soup.find_all("a", attrs={"class": "small"}):
+            tag_data = {
+                "url": urljoin(self.start_url, tag.get("href")),
+                "name": tag.text,
+            }
+            result.append(tag_data)
+        return result
 
     def save(self, data):
         self.db.create_post(data)
