@@ -1,42 +1,48 @@
 import scrapy
-from pymongo import MongoClient
+from ..loaders import AutoyoulaLoader
 
 
 class AutoyoulaSpider(scrapy.Spider):
     name = "autoyoula"
     allowed_domains = ["auto.youla.ru"]
     start_urls = ["https://auto.youla.ru/"]
+    css_query = {
+        "brands": ".TransportMainFilters_brandsList__2tIkv "
+        ".ColumnItemList_container__5gTrc .ColumnItemList_column__5gjdt a.blackLink"
+    }
+
+    xpath_query = {
+        "brands": '//div[@class="TransportMainFilters_brandsList__2tIkv"]//a[@class="blackLink"]/@href',
+        "pagination": '//div[contains(@class, "Paginator_block")]//a/@href',
+        "ads": '//article[contains(@class, "SerpSnippet_snippet")]//a[contains(@class, "SerpSnippet_name")]/@href',
+    }
+
+    itm_template = {
+        "title": '//div[@data-target="advert-title"]/text()',
+        "images": '//figure[contains(@class, "PhotoGallery_photo")]//img/@src',
+        "description": '//div[contains(@class, "AdvertCard_descriptionInner")]//text()',
+        "author": '//script[contains(text(), "window.transitState =")]/text()',
+        "specifications": '//div[contains(@class, "AdvertCard_specs")]/div/div[contains(@class, "AdvertSpecs_row")]',
+    }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.db = MongoClient()["gb_parse_12"]
 
-    def parse(self, response, **kwargs):
-        brands = response.css("a.blackLink")
-        for brand_link in brands:
-            yield response.follow(
-                brand_link.attrib.get("href", "/"), callback=self.brand_parse
-            )
+    def parse(self, response):
+        for link in response.xpath(self.xpath_query["brands"]):
+            yield response.follow(link, callback=self.brand_page_parse)
 
-    def brand_parse(self, response):
-        pag_links = response.css("div.Paginator_block__2XAPy a.Paginator_button__u1e7D")
-        for pag_link in pag_links:
-            yield response.follow(
-                pag_link.attrib.get("href"), callback=self.brand_parse
-            )
-        ads_links = response.css(
-            "article.SerpSnippet_snippet__3O1t2 a.SerpSnippet_photoWrapper__3W9J4"
-        )
-        for ads_link in ads_links:
-            yield response.follow(ads_link.attrib.get("href"), callback=self.ads_parse)
+    def brand_page_parse(self, response):
+        for page in response.xpath(self.xpath_query["pagination"]):
+            yield response.follow(page, callback=self.brand_page_parse)
+
+        for item_link in response.xpath(self.xpath_query["ads"]):
+            yield response.follow(item_link, callback=self.ads_parse)
 
     def ads_parse(self, response):
-        data = {
-            "url": response.url,
-            "title": response.css("div.AdvertCard_advertTitle__1S1Ak::text").get(),
-            "price": response.css("div.AdvertCard_price__3dDCr::text")
-            .get()
-            .replace("\u2009", ""),
-        }
-        collection = self.db[self.name]
-        collection.insert_one(data)
+        loader = AutoyoulaLoader(response=response)
+        loader.add_value("url", response.url)
+        for name, selector in self.itm_template.items():
+            loader.add_xpath(name, selector)
+        
+        yield loader.load_item()
