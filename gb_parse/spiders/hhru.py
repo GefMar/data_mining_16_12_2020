@@ -23,14 +23,16 @@ class HhruSpider(scrapy.Spider):
         "url": '//a[contains(@data-qa, "company-site")]/@href',
         "description": '//div[contains(@data-qa, "company-description")]//text()',
     }
-    
-    def get_tasks(self, response, link_list:list, callback):
+
+    def get_tasks(self, response, link_list: list, callback):
         for link in link_list:
             yield response.follow(link, callback=callback)
 
     def parse(self, response, **kwargs):
         yield from self.get_tasks(response, response.xpath(self._xpath["pagination"]), self.parse)
-        yield from self.get_tasks(response, response.xpath(self._xpath["vacancy_urls"]), self.vacancy_parse)
+        yield from self.get_tasks(
+            response, response.xpath(self._xpath["vacancy_urls"]), self.vacancy_parse
+        )
 
     def vacancy_parse(self, response, **kwargs):
         loader = HHVacancyLoader(response=response)
