@@ -5,15 +5,26 @@
 
 
 # useful for handling different item types with a single interface
-
+from scrapy import Request
+from scrapy.pipelines.images import ImagesPipeline
 import pymongo
 
 
 class MongoPipeline:
     def __init__(self):
-        self.db = pymongo.MongoClient()['gb_parse_16_12_2020']
+        self.db = pymongo.MongoClient()["gb_parse_16_12_2020"]
 
     def process_item(self, item, spider):
-        if not self.db[item.__class__.__name__].count({'url': item['url']}):
+        if not self.db[item.__class__.__name__].count({"url": item["url"]}):
             self.db[item.__class__.__name__].insert_one(item)
+        return item
+
+
+class GbImagePipeline(ImagesPipeline):
+    def get_media_requests(self, item, info):
+        for img_url in item.get("images", []):
+            yield Request(img_url)
+
+    def item_completed(self, results, item, info):
+        item["images"] = [itm[1] for itm in results]
         return item
